@@ -100,6 +100,39 @@
     font-family:'Inter',sans-serif;
     color:var(--ink);
   }
+  .combo{position:relative;}
+  .combo-input{
+    width:100%;
+    padding:9px 10px;
+    border-radius:9px;
+    border:1px solid var(--line);
+    background:#fbfbfa;
+    font-size:.92rem;
+    font-family:'Inter',sans-serif;
+    color:var(--ink);
+  }
+  .combo-input:focus{outline:none;border-color:var(--brass);box-shadow:0 0 0 3px var(--brass-soft);}
+  .combo-list{
+    display:none;
+    position:absolute;
+    top:calc(100% + 4px);
+    left:0;right:0;
+    max-height:240px;
+    overflow-y:auto;
+    background:#fff;
+    border:1px solid var(--line);
+    border-radius:9px;
+    box-shadow:0 12px 28px -12px rgba(0,0,0,.3);
+    z-index:40;
+  }
+  .combo-list.open{display:block;}
+  .combo-item{
+    padding:9px 12px;
+    font-size:.86rem;
+    cursor:pointer;
+  }
+  .combo-item:hover, .combo-item.hl{background:var(--brass-soft);}
+  .combo-empty{padding:9px 12px;font-size:.82rem;color:var(--ink-soft);}
 
   /* ---- sections ---- */
   .wrap{max-width:1180px;margin:0 auto;padding:28px 20px 0;}
@@ -244,17 +277,20 @@
 
 <div class="filters">
   <div class="filters-panel">
-    <div class="field">
+    <div class="field combo">
       <label for="fMes">Mês</label>
-      <select id="fMes"></select>
+      <input type="text" id="fMes" class="combo-input" placeholder="Todos" autocomplete="off" inputmode="search">
+      <div class="combo-list" id="fMesList"></div>
     </div>
-    <div class="field">
+    <div class="field combo">
       <label for="fRep">Representante</label>
-      <select id="fRep"></select>
+      <input type="text" id="fRep" class="combo-input" placeholder="Todos" autocomplete="off" inputmode="search">
+      <div class="combo-list" id="fRepList"></div>
     </div>
-    <div class="field">
+    <div class="field combo">
       <label for="fCli">Cliente</label>
-      <select id="fCli"></select>
+      <input type="text" id="fCli" class="combo-input" placeholder="Todos" autocomplete="off" inputmode="search">
+      <div class="combo-list" id="fCliList"></div>
     </div>
   </div>
 </div>
@@ -479,26 +515,62 @@ function clientesDoRepresentante(rep){
   return [...clis].sort();
 }
 
-function populateFilters(){
-  TODOS_OS_DADOS = [...DATA.vendas, ...DATA.amostras];
-  const meses = new Set(), reps = new Set();
-  TODOS_OS_DADOS.forEach(r=>{
-    if(r['Data Emissão Pedido']) meses.add(ymKey(r['Data Emissão Pedido']));
-    if(r['Data Faturamento']) meses.add(ymKey(r['Data Faturamento']));
-    if(r['Representante']) reps.add(r['Representante']);
-  });
-  const mesesArr = [...meses].sort();
-  fillSelect('fMes', ['Todos', ...mesesArr], (k)=> k==='Todos' ? 'Todos' : ymLabel(k));
-  fillSelect('fRep', ['Todos', ...[...reps].sort()]);
-  fillSelect('fCli', ['Todos', ...clientesDoRepresentante('Todos')]);
+function escapeHtml(s){
+  const d = document.createElement('div');
+  d.textContent = s;
+  return d.innerHTML;
+}
 
-  document.getElementById('fRep').onchange = ()=>{
-    filters.rep = document.getElementById('fRep').value;
-    // Atualiza a lista de clientes para mostrar só os desse representante
-    filters.cli = 'Todos';
-    fillSelect('fCli', ['Todos', ...clientesDoRepresentante(filters.rep)]);
-    aplicarFiltrosEAtualizar();
+const combos = {}; // guarda os controles de cada combobox, por id
+
+function setupCombo(inputId, listId, itens, onSelect){
+  // itens: array de {value, label}
+  const input = document.getElementById(inputId);
+  const list = document.getElementById(listId);
+  let itemsAtuais = itens;
+  let filtrados = itemsAtuais;
+  let ultimoLabel = itens[0] ? itens[0].label : 'Todos';
+
+  function render(texto){
+    const q = (texto||'').trim().toLowerCase();
+    filtrados = q ? itemsAtuais.filter(it => it.label.toLowerCase().includes(q)) : itemsAtuais;
+    list.innerHTML = filtrados.length
+      ? filtrados.slice(0,200).map((it,i)=>`<div class="combo-item" data-i="${i}">${escapeHtml(it.label)}</div>`).join('')
+      : '<div class="combo-empty">Nenhum resultado</div>';
+  }
+  function open(){ render(input.value==='Todos' ? '' : input.value); list.classList.add('open'); }
+  function close(reverter){
+    list.classList.remove('open');
+    if(reverter) input.value = ultimoLabel;
+  }
+
+  input.addEventListener('focus', ()=>{ input.select(); open(); });
+  input.addEventListener('click', open);
+  input.addEventListener('input', ()=> { open(); render(input.value); });
+  input.addEventListener('keydown', (e)=>{
+    if(e.key==='Escape'){ close(true); input.blur(); }
+  });
+  list.addEventListener('mousedown', (e)=>{
+    e.preventDefault(); // evita blur antes do clique registrar
+    const item = e.target.closest('.combo-item');
+    if(!item) return;
+    const it = filtrados[+item.dataset.i];
+    if(!it) return;
+    input.value = it.label;
+    ultimoLabel = it.label;
+    close(false);
+    onSelect(it.value);
+  });
+  document.addEventListener('click', (e)=>{
+    if(e.target!==input && !list.contains(e.target)) close(true);
+  });
+
+  const controle = {
+    setItems(novosItens){ itemsAtuais = novosItens; },
+    setValue(value, label){ input.value = label; ultimoLabel = label; },
   };
+  combos[inputId] = controle;
+  return controle;
 }
 
 function aplicarFiltrosEAtualizar(){
@@ -509,15 +581,40 @@ function aplicarFiltrosEAtualizar(){
   renderCards('amostras');
 }
 
-function fillSelect(id, values, labelFn){
-  const sel = document.getElementById(id);
-  sel.innerHTML = values.map(v=>`<option value="${v}">${labelFn?labelFn(v):v}</option>`).join('');
-  if(id==='fRep') return; // fRep tem handler próprio, definido em populateFilters
-  sel.onchange = ()=>{
-    const key = id==='fMes'?'mes':'cli';
-    filters[key]=sel.value;
-    aplicarFiltrosEAtualizar();
-  };
+function populateFilters(){
+  TODOS_OS_DADOS = [...DATA.vendas, ...DATA.amostras];
+  const meses = new Set(), reps = new Set();
+  TODOS_OS_DADOS.forEach(r=>{
+    if(r['Data Emissão Pedido']) meses.add(ymKey(r['Data Emissão Pedido']));
+    if(r['Data Faturamento']) meses.add(ymKey(r['Data Faturamento']));
+    if(r['Representante']) reps.add(r['Representante']);
+  });
+  const mesesArr = [...meses].sort();
+
+  setupCombo('fMes', 'fMesList',
+    [{value:'Todos', label:'Todos'}, ...mesesArr.map(k=>({value:k, label:ymLabel(k)}))],
+    (value)=>{ filters.mes = value; aplicarFiltrosEAtualizar(); }
+  );
+
+  setupCombo('fRep', 'fRepList',
+    [{value:'Todos', label:'Todos'}, ...[...reps].sort().map(r=>({value:r, label:r}))],
+    (value)=>{
+      filters.rep = value;
+      filters.cli = 'Todos';
+      combos.fCli.setValue('Todos','Todos');
+      combos.fCli.setItems([{value:'Todos', label:'Todos'}, ...clientesDoRepresentante(value).map(c=>({value:c, label:c}))]);
+      aplicarFiltrosEAtualizar();
+    }
+  );
+
+  setupCombo('fCli', 'fCliList',
+    [{value:'Todos', label:'Todos'}, ...clientesDoRepresentante('Todos').map(c=>({value:c, label:c}))],
+    (value)=>{ filters.cli = value; aplicarFiltrosEAtualizar(); }
+  );
+
+  document.getElementById('fMes').value = 'Todos';
+  document.getElementById('fRep').value = 'Todos';
+  document.getElementById('fCli').value = 'Todos';
 }
 
 fetch('data.json?_=' + Date.now())
